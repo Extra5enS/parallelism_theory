@@ -4,7 +4,11 @@ Problem of false sharing includes fack that paralle varient of program may have 
 
 ## Why flase sharing exist
 
-False sharing problem connect with cache. 2 var may place at the same cachline.
+False sharing problem connect with cache. both variables may place at the same cachline. If the value changes in one thread, it must also be changed in the cache of another (loading from memory). Example: 2 variables of 32bit each can fall into the same 64bit long cacheline. 
+
+## Little update to avoid this problem
+
+Let's fill the empty part of the line with unused variables. Then two variables will not be able to get into the same line and generate cashmises. Here we made a test that checked whether the performance of the algorithm tied to the cache improves.
 
 ## Resultes
 
