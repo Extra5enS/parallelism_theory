@@ -1,6 +1,6 @@
 # False sharing
 
-Problem of false sharing includes fack that paralle varient of program may have less profite than line one
+Problem of false sharing includes fact that paralle varient of program may have less profite than line one
 
 ## Why flase sharing exist
 
@@ -13,3 +13,8 @@ Let's fill the empty part of the line with unused variables. Then two variables 
 ## Resultes
 
 ![alt text](https://github.com/Extra5enS/parallelism_theory/blob/master/false_sharing/graph.jpg)
+
+In this graph we can see 3 "lines".
+* Purple line shows working of programme in single thread mode. This mode is quickest because this task is more simple for 1 thread in environment of many processes.
+* Green shows multithread mode without optimization.
+* Blue shows line with optimization. How you see, it's work, but don't avoid false sharing in full meaning.
