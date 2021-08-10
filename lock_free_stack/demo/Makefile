@@ -11,5 +11,8 @@ single:
 	$(GCC) $(NAME_SINGLE) $(FLAGS) -o $(OBJ_NAME)
 	$(GCC) $(OBJ_NAME) $(LF)
 
+main:
+	make -C ./.. all
+
 clean:
-	rm -f $(BYN_NAME)
+	rm -f $(BYN_NAME) *.o a.out

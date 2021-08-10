@@ -31,25 +31,26 @@ void __lfstack_find_to_delete(struct lfstack_t* lfs) {
 	int next_delete = 0;
 	if(atomic_compare_exchange_strong(&(lfs -> in_delete), &next_delete, 1)) {
 		size_t p = 0, new_dcount = 0;
-		void** plist = calloc(2 * lfs -> thread_n, sizeof(void*));
-		void** new_dlist = calloc(2 * lfs -> thread_n, sizeof(void*));
+		void** plist = calloc(lfs -> thread_n, sizeof(void*));
+		void** new_dlist = calloc(lfs -> thread_n, sizeof(void*));
+		
 		// form list of HP
 		for(size_t t = 0; t < lfs -> thread_n; ++t) {
-			if(!lfs -> dlist[t]) {
-				plist[p++] = lfs -> dlist[t];
+			if(lfs -> HP_list[t]) {
+				plist[p++] = lfs -> HP_list[t];
 			}
 		}
 		// sort to opt next step
 		qsort(plist, p, sizeof(void*), comp);
+		
 		// check that node for delete is't HP for all thread
 		for(size_t i = 0; i < 2 * (lfs -> thread_n); ++i) {
-			if(bsearch(&(lfs -> dlist[i]), 
-						plist, lfs -> thread_n, 
-						sizeof(void*), comp)) {
+			if(bsearch(&(lfs -> dlist[i]), plist, 
+						p, sizeof(void*), comp)) {
 				new_dlist[new_dcount++] = lfs -> dlist[i];
 			} else {
-				printf("here1 \n");
 				free(lfs -> dlist[i]);
+				lfs -> dlist[i] = NULL;
 			}
 		}
 		// add new list
@@ -60,6 +61,7 @@ void __lfstack_find_to_delete(struct lfstack_t* lfs) {
 		
 		free(plist);
 		free(new_dlist);
+		
 		// open "door" for another threads
 		atomic_store(&(lfs -> in_delete), 0);
 	}
@@ -86,11 +88,13 @@ void lfstack_init(struct lfstack_t* lfs, size_t thread_n) {
 	// start value for stack
 	lfs -> first = NULL;
 	lfs -> size = 0;
+	
 	// start value for thread
 	lfs -> thread_n = thread_n; 
 	lfs -> id_list_i = 0;
 	lfs -> id_list = calloc(thread_n, sizeof(int));
 	lfs -> HP_list = calloc(thread_n, sizeof(void*));
+	
 	// start dlist info
 	lfs -> dlist_iter = 0;
 	lfs -> dlist = calloc(2 * thread_n, sizeof(void*));
@@ -101,6 +105,7 @@ void lfstack_init(struct lfstack_t* lfs, size_t thread_n) {
 void lfstack_add_thread(struct lfstack_t* lfs) {
 	// find pthread_id to use as uid
 	int id = pthread_self();
+	
 	// add new id if it's posibole
 	if(lfs -> id_list_i == lfs -> thread_n) {
 		return; // <- add message of error
@@ -113,12 +118,15 @@ void lfstack_add_thread(struct lfstack_t* lfs) {
 void lfstack_push(struct lfstack_t* lfs, void* data, size_t len) {
 	// select memory for new node
 	byte* node = malloc(len + sizeof(struct __node));
+	
 	// add infomation in __node
 	struct __node* info = (struct __node*)(node);
 	info -> __next = NULL;
 	info -> __data_size = len;
+	
 	// copy information fron data to free space in node
 	memcpy(node + sizeof(struct __node), data, len);
+	
 	// try to place this node in lfs -> first, 
 	// but we now that we may do it with any other user
 	// So when we try it, we must chache it atomicly with substitution
@@ -141,6 +149,7 @@ void lfstack_pop(struct lfstack_t* lfs, void* data, size_t len) {
 	}
 	// cpy info from node to data
 	memcpy(data, (byte*)(n) + sizeof(struct __node), MIN(len, n -> __data_size));	
+	
 	// add it to delete list
 	__lfstack_add_delete(lfs, n);
 }
@@ -149,8 +158,10 @@ void lfstack_pop(struct lfstack_t* lfs, void* data, size_t len) {
 int lfstack_search(struct lfstack_t* lfs, void* data, size_t len) {
 	// we think that it's no the same data
 	int res = 0;
+	
 	// p -> first mustn't be deleted
 	struct __node* p =  __lfstack_add_hp(lfs, &(lfs -> first));
+	
 	// try to find this data
 	for(;p != NULL;) {
 		// if data and information near __node is the same, 
@@ -171,6 +182,7 @@ void lfstack_free(struct lfstack_t* lfs) {
 	for(size_t i = 0; i < lfs -> dlist_iter; ++i) {
 		free(lfs -> dlist[i]);
 	}
+	free(lfs -> dlist);
 }
 
 // only for single mode
