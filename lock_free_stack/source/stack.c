@@ -1,7 +1,5 @@
 #include "../include/stack.h"
 
-#include<stdio.h>
-
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
 struct __node*  __lfstack_add_hp(struct lfstack_t* lfs, struct __node** ptr) {
@@ -36,28 +34,31 @@ void __lfstack_find_to_delete(struct lfstack_t* lfs) {
 		
 		// form list of HP
 		for(size_t t = 0; t < lfs -> thread_n; ++t) {
-			if(lfs -> HP_list[t]) {
-				plist[p++] = lfs -> HP_list[t];
+			void* HP = atomic_load(&(lfs -> HP_list[t]));
+			if(HP) {
+				plist[p++] = HP;
 			}
 		}
 		// sort to opt next step
 		qsort(plist, p, sizeof(void*), comp);
-		
 		// check that node for delete is't HP for all thread
 		for(size_t i = 0; i < 2 * (lfs -> thread_n); ++i) {
-			if(bsearch(&(lfs -> dlist[i]), plist, 
+			if(p && bsearch(&(lfs -> dlist[i]), plist, 
 						p, sizeof(void*), comp)) {
 				new_dlist[new_dcount++] = lfs -> dlist[i];
 			} else {
 				free(lfs -> dlist[i]);
-				lfs -> dlist[i] = NULL;
 			}
+			lfs -> dlist[i] = NULL;
 		}
 		// add new list
 		for(size_t i = 0; i < new_dcount; ++i) {
 			lfs -> dlist[i] = new_dlist[i];
 		}
-		lfs -> dlist_iter = new_dcount;
+		for(size_t i = new_dcount; i < 2 * lfs -> thread_n; ++i) {
+			lfs -> dlist[i] = NULL;
+		}
+		atomic_store(&(lfs -> dlist_iter), new_dcount);
 		
 		free(plist);
 		free(new_dlist);
@@ -70,17 +71,19 @@ void __lfstack_find_to_delete(struct lfstack_t* lfs) {
 
 void __lfstack_add_delete(struct lfstack_t* lfs, struct __node* node) {
 	// taking up space for new delete node
-	int p = atomic_fetch_add(&(lfs -> dlist_iter), 1);
-	
-	// if dlist full
-	if(lfs -> dlist_iter >= 2 * lfs -> thread_n) {
-		// try to really delete some node to free space and try again
-		__lfstack_find_to_delete(lfs);
-		__lfstack_add_delete(lfs, node);
-	} else {
-		// add this node
-		lfs -> dlist[p] = node;
-	}
+	size_t p = 0;
+	do {
+		// try to place node
+		p = atomic_load(&(lfs -> dlist_iter));
+		if (p == 2 * lfs -> thread_n) {
+			// if no place try to delete old node;
+			__lfstack_find_to_delete(lfs);
+		}
+	} while(!atomic_compare_exchange_weak(&(lfs -> dlist_iter), &p, p + 1));
+	void* null = NULL;
+	if(!atomic_compare_exchange_strong(&(lfs -> dlist[p]), &null, node)) {
+		__lfstack_add_delete(lfs, node);	
+	} 
 }
 
 
@@ -125,7 +128,7 @@ void lfstack_push(struct lfstack_t* lfs, void* data, size_t len) {
 	info -> __data_size = len;
 	
 	// copy information fron data to free space in node
-	memcpy(node + sizeof(struct __node), data, len);
+	memcpy(data(node), data, len);
 	
 	// try to place this node in lfs -> first, 
 	// but we now that we may do it with any other user
@@ -138,20 +141,21 @@ void lfstack_push(struct lfstack_t* lfs, void* data, size_t len) {
 }
 
 
-void lfstack_pop(struct lfstack_t* lfs, void* data, size_t len) {
+int lfstack_pop(struct lfstack_t* lfs, void* data, size_t len) {
 	// remember and remove first element
 	struct __node* n = NULL;
 	do {
 		n = atomic_load(&lfs -> first);
 	} while(n && !atomic_compare_exchange_weak(&(lfs -> first), &n, n -> __next));
 	if(n == NULL) {
-		return;
+		return 0;
 	}
 	// cpy info from node to data
-	memcpy(data, (byte*)(n) + sizeof(struct __node), MIN(len, n -> __data_size));	
+	memcpy(data, data(n), MIN(len, n -> __data_size));	
 	
 	// add it to delete list
 	__lfstack_add_delete(lfs, n);
+	return 1;
 }
 
 
@@ -166,31 +170,64 @@ int lfstack_search(struct lfstack_t* lfs, void* data, size_t len) {
 	for(;p != NULL;) {
 		// if data and information near __node is the same, 
 		// we have the sane data is stack
-		if(memcmp((byte*)(p) + sizeof(struct __node), data, len) == 0) {
+		if(memcmp(data(p), data, len) == 0) {
 			res = 1;
+			p = NULL;
+			__lfstack_add_hp(lfs, &p);	
 			break;
 		}
-		// We finish with this poiter so we my try to get next node
+		// we finish with this poiter so we my try to get next node
 		p = __lfstack_add_hp(lfs, &(p -> __next));
 	}
 	return res;
 }
 
+void free_node(struct __node* n) {
+	if (n -> __next != NULL) {
+		free_node(n -> __next);
+	}
+	free(n);
+}
+
 void lfstack_free(struct lfstack_t* lfs) {
-	free(lfs -> id_list);
-	free(lfs -> HP_list);
 	for(size_t i = 0; i < lfs -> dlist_iter; ++i) {
 		free(lfs -> dlist[i]);
 	}
+	free(lfs -> id_list);
 	free(lfs -> dlist);
+	free(lfs -> HP_list);
+	free_node(lfs -> first);
+}
+
+int lfstack_doif(struct lfstack_t* lfs, void* data, size_t len, void(*func)(void*)) {
+	// we think that it's no the same data
+	int res = 0;
+	
+	// p -> first mustn't be deleted
+	struct __node* p =  __lfstack_add_hp(lfs, &(lfs -> first));
+	
+	// try to find this data
+	for(;p != NULL;) {
+		// if data and information near __node is the same, 
+		// we have the sane data is stack
+		if(memcmp(data(p), data, len) == 0) {
+			res = 1;
+			func(data(p));
+			p = NULL; 
+			__lfstack_add_hp(lfs, &p);	
+			break;
+		}
+		// we finish with this poiter so we my try to get next node
+		p = __lfstack_add_hp(lfs, &(p -> __next));
+	}
+	return res;
+
 }
 
 // only for single mode
-void lfstack_for_each(struct lfstack_t* lfs) {
-	for(struct __node* p = lfs -> first; p != NULL; p = p -> __next) {
-		byte* data = (byte*)(p) + sizeof(struct __node);
-		int* n = (int*)(data);
-		printf("[%d] -> ", *n);
+void lfstack_for_each(struct lfstack_t* lfs, void(*func)(void*)) {
+	struct __node* p = lfs -> first;
+	for(;p != NULL; p = p -> __next) {
+		func(data(p));
 	}
-	printf("\n");
 }

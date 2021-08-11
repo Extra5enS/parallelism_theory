@@ -1,5 +1,5 @@
 GCC = gcc
-FLAGS = -Wall -c -shared -lm
+FLAGS = -Wall -c -shared -lm -pthread
 NAME = stack.c
 OBJ_NAME = stack.o
 LIB_NAME = liblfstack.so

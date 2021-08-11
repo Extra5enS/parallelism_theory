@@ -1,4 +1,4 @@
-all: single
+all: single multy
 	@echo "'-_-"
 
 lib:
@@ -6,6 +6,9 @@ lib:
 
 single: lib
 	make -C ./demo/ single
+
+multy: lib
+	make -C ./demo/ multy
 
 clean:
 	make -C ./source clean

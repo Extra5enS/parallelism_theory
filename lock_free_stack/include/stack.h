@@ -10,6 +10,7 @@
 
 #define HP_COUNT 10
 #define DELETE_SIZE 10
+#define data(node) ((byte*)(node) + sizeof(node))
 
 /*
  * struct node {
@@ -43,12 +44,13 @@ void lfstack_init(struct lfstack_t* lfs, size_t thread_n);
 void lfstack_add_thread(struct lfstack_t* lfs);
 
 void lfstack_push(struct lfstack_t* lfs, void* data, size_t len);
-void lfstack_pop(struct lfstack_t* lfs, void* data, size_t len);
+int lfstack_pop(struct lfstack_t* lfs, void* data, size_t len);
 
 int lfstack_search(struct lfstack_t* lfs, void* data, size_t len);
+int lfstack_doif(struct lfstack_t* lfs, void* data, size_t len, void(*func)(void*));
 
 void lfstack_free(struct lfstack_t*);
 
-void lfstack_for_each(struct lfstack_t*);
+void lfstack_for_each(struct lfstack_t* lfs, void(*func)(void*));
 
 #endif
